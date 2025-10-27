@@ -10,6 +10,16 @@ import WorldEvent
 SERVER_OUTPUT_PID = 41483
 SERVER_PORT = 26004
 
+JTAG_CHUNK_TYPE = "CTYPE"
+JTAG_EVENT = "EVENT"
+
+JTAG_SUCCESS = "SUCCESS"
+JTAG_USERNAME = "USERNAME" # Perhaps replace with a general string argument?
+JTAG_USER_ID = "USER_ID" # Perhaps replace with a general int argument?
+
+JKEY_CHUNK_TYPE_EVENT = "EVENT"
+JKEY_CHUNK_TYPE_JOIN_REQUEST = "JOIN_REQUEST"
+JKEY_CHUNK_TYPE_JOIN_RESPONSE = "JOIN_RESPONSE"
 
 class Communicator:
 
@@ -20,12 +30,7 @@ class Communicator:
         pass
 
     def _serialize_event(self, event):
-
-        match type(event):
-            case WorldEvent.AddPositionEvent:
-                return "|" + json.dumps({"CTYPE" : "EVENT", "ETYPE" : "ADD_POSITION", "ORDER" : event.order, "POSITION" : event.position, "ID" : event.id}) + "|"
-            case _:
-                return False
+        return "|" + json.dumps({JTAG_CHUNK_TYPE : JKEY_CHUNK_TYPE_EVENT, JTAG_EVENT : event.serialize()}) + "|"
 
     def _slice_chunks(self, chunk_stream):
         chunk_rest_exists = not chunk_stream[-1] == "|"
@@ -54,7 +59,7 @@ class Client(Communicator):
         self.csock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.csock.connect((socket.gethostname(), SERVER_PORT))
         
-        self.csock.send(("|" + json.dumps({"CTYPE": "JOIN_REQUEST", "USERNAME": "Bonkers"}) + "|").encode())
+        self.csock.send(("|" + json.dumps({JTAG_CHUNK_TYPE: JKEY_CHUNK_TYPE_JOIN_REQUEST, JTAG_USERNAME: "Bonkers"}) + "|").encode()) # TODO it cannot stay Bonkers.
 
 
     def _start_receiver(self):
@@ -77,29 +82,22 @@ class Client(Communicator):
             for chunk in chunks:
                 data = json.loads(chunk)
 
-                match data.get("CTYPE"):
+                match data.get(JTAG_CHUNK_TYPE):
                 
-                    case "JOIN_RESPONSE":
+                    case str(JKEY_CHUNK_TYPE_JOIN_RESPONSE):
 
-                        if data.get("SUCCESS"):
+                        if data.get(JTAG_SUCCESS):
                             print(f"Successfully logged in with ID {data.get(user_id)}")
 
-                    case "EVENT":
+                    case str(JKEY_CHUNK_TYPE_EVENT):
 
-                        event_type = data.get("ETYPE")
-
-                        match event_type:
-                            case "ADD_POSITION":
-                                try:
-                                    order = data["ORDER"]
-                                    id = data["ID"]
-                                    position = tuple(data["POSITION"][:2])
-
-                                    self.official_events.append(WorldEvent.AddPositionEvent(order, position, id))
-                                
-                                except:
-                                    print("The server sent improper ADD_POSITION event arguments")
-
+                        try:
+                            event_json = data.get(JTAG_EVENT)
+                            event = WorldEvent.compose_world_event(event_json)
+                            self.official_events.append(event)
+                        except:
+                            print("The server sent a weird JSON structure for the event")
+                            break
 
                     case _:
                         print("The server sent a weird ass request")
@@ -179,15 +177,15 @@ class Server(Communicator):
             for chunk in chunks:
                 data = json.loads(chunk)
 
-                match data.get("CTYPE"):
+                match data.get(JTAG_CHUNK_TYPE):
                 
-                    case "JOIN_REQUEST":
+                    case  str(JKEY_CHUNK_TYPE_JOIN_REQUEST):
 
                         if connection.user_id:
                             break
 
                         success = False
-                        username = data.get("USERNAME")
+                        username = data.get(JTAG_USERNAME)
                         user_id = self.registered_users
                         
                         if username:
@@ -200,29 +198,24 @@ class Server(Communicator):
 
                             
                         # Response
-                        csock.send(("|" + json.dumps({"CTYPE": "JOIN_RESPONSE", "SUCCESS": success, "USERNAME": username, "USER_ID": user_id}) + "|").encode())
+                        csock.send(("|" + json.dumps({JTAG_CHUNK_TYPE: JKEY_CHUNK_TYPE_JOIN_RESPONSE, JTAG_SUCCESS: success, JTAG_USERNAME: username, JTAG_USER_ID : user_id}) + "|").encode())
 
                     # The only thing the communicator has to check is whether the event actually originates from
                     # the particular user ID
-                    case "EVENT":
 
-                        event_type = data.get("ETYPE")
+                    case  str(JKEY_CHUNK_TYPE_EVENT):
 
-                        match event_type:
-                            case "ADD_POSITION":
-                                try:
-                                    order = data["ORDER"]
-                                    id = data["ID"]
-                                    position = tuple(data["POSITION"][:2])
-                                    connection.recent_events.append(WorldEvent.AddPositionEvent(order, position, id))
-                                except:
-                                    print("The client sent improper ADD_POSITION event arguments")
-
+                        try:
+                            event_json = data.get(JTAG_EVENT)
+                            event = WorldEvent.compose_world_event(event_json)
+                            # Perform checks, perhaps? Oh well.. maybe it can be done by the event manager as well . ? Presumably so
+                            connection.recent_events.append(event)
+                        except:
+                            print("The server sent a weird JSON structure for the event")
+                            break
 
                     case _:
                         print("The client sent a weird ass request")
-
-
 
 
     def start_listener(self):
