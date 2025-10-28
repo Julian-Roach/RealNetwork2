@@ -3,6 +3,7 @@ import Manipulator
 import Communicator
 import threading
 
+import WorldEvent
 # Syncs events with server events
 # 
 
@@ -37,6 +38,8 @@ class EventManager:
 
         if not self.authoritative:
             self.communicator = Communicator.Client() # Playing on a server
+            listener_thread = threading.Thread(target=self.communicator._start_receiver)
+            listener_thread.start()
 
         if self.authoritative and not self.serving:
             pass # Playing offline
@@ -48,14 +51,12 @@ class EventManager:
         self.new_local.append(event)
 
 
-    def _evaluate_event_log(event_log):
+    def _evaluate_event_log(self, user_id, event_log):
         
-        user_id, events = event_log
-
-        for event in events:
-
+        for event in event_log:
+            
             # Check order
-            event.order = len(self.history) + len(self.new_local)
+            event.order = len(self.history) + len(self.new_local) + 1
 
             match type(event):
 
@@ -67,24 +68,26 @@ class EventManager:
 
     def update(self):
 
-        # Apply
 
         # Offline
         if self.authoritative and not self.serving:
+
+            # Apply
             for new_event in self.new_local:
                 self.manipulator.incorporate(new_event)
                 self.history.append(new_event)
 
             self.new_local = []
+
+
         # As server
         if self.authoritative and self.serving:
             
             # Get, Apply
             client_event_logs = self.communicator.get_events()
 
-            for event_log in client_event_logs:
-                print("ABC")
-                self._evaluate_event_log(event_log)
+            for user_id in client_event_logs.keys():
+                self._evaluate_event_log(user_id, client_event_logs[user_id])
 
             for new_event in self.new_local:
                 self.manipulator.incorporate(new_event)
@@ -92,12 +95,15 @@ class EventManager:
 
             # Upload
             self.communicator.upload_local_events(self.new_local)
-
+            self.new_local = []
 
 
         # As client
         if not self.authoritative:
+
+            # Get, Apply
             official_events = self.communicator.get_events()
+            self.communicator.reset_events()
 
             for old_local_event in self.old_local:
                 self.manipulator.revert(old_local_event)
@@ -108,12 +114,8 @@ class EventManager:
             for new_local_event in self.new_local:
                 self.manipulator.incorporate(new_local_event)
 
-            self.old_local = self.new_local
+            # Upload
             self.communicator.upload_local_events(self.new_local)
+            self.old_local = self.new_local
             self.new_local = []
 
-
-            
-
-
-        # Upload

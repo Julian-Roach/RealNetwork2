@@ -2,10 +2,7 @@
 
 import pygame
 
-
-RADIUS_POSITION = 10
-COLOR_BLACK = (0,0,0)
-COLOR_GREEN = (255,0,0)
+import macros as M
 
 class Renderer:
 
@@ -19,8 +16,8 @@ class Renderer:
 
     def render(self):
 
-        self.screen.fill(COLOR_BLACK)
+        self.screen.fill(M.COLOR_BLACK)
         for position in self.world.positions:
-            pygame.draw.circle(self.screen, color=COLOR_GREEN, center=(position.x, position.y), radius=RADIUS_POSITION)
+            pygame.draw.circle(self.screen, color=M.COLOR_GREEN, center=(position.x, position.y), radius=M.RADIUS_POSITION)
 
         pygame.display.update()

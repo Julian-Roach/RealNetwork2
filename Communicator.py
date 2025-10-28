@@ -5,21 +5,14 @@ import threading
 import sys
 import json
 
+import copy
+
 import WorldEvent
 
-SERVER_OUTPUT_PID = 41483
-SERVER_PORT = 26004
+import macros as M
 
-JTAG_CHUNK_TYPE = "CTYPE"
-JTAG_EVENT = "EVENT"
-
-JTAG_SUCCESS = "SUCCESS"
-JTAG_USERNAME = "USERNAME" # Perhaps replace with a general string argument?
-JTAG_USER_ID = "USER_ID" # Perhaps replace with a general int argument?
-
-JKEY_CHUNK_TYPE_EVENT = "EVENT"
-JKEY_CHUNK_TYPE_JOIN_REQUEST = "JOIN_REQUEST"
-JKEY_CHUNK_TYPE_JOIN_RESPONSE = "JOIN_RESPONSE"
+# TODO: "new_official_events" here and a few other synonyms are used in different places. Those are horrible naming choices.
+# come up with a better nomenclature for temporarily storing new external events
 
 class Communicator:
 
@@ -30,7 +23,7 @@ class Communicator:
         pass
 
     def _serialize_event(self, event):
-        return "|" + json.dumps({JTAG_CHUNK_TYPE : JKEY_CHUNK_TYPE_EVENT, JTAG_EVENT : event.serialize()}) + "|"
+        return "|" + json.dumps({M.JTAG_CHUNK_TYPE : M.JKEY_CHUNK_TYPE_EVENT, M.JTAG_EVENT : event.decompose()}) + "|"
 
     def _slice_chunks(self, chunk_stream):
         chunk_rest_exists = not chunk_stream[-1] == "|"
@@ -53,23 +46,26 @@ class Client(Communicator):
     running = True
     csock = None
 
-    official_events = []
+    new_official_events = []
 
     def __init__(self):
         self.csock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.csock.connect((socket.gethostname(), SERVER_PORT))
+        self.csock.connect((socket.gethostname(), M.SERVER_PORT))
         
-        self.csock.send(("|" + json.dumps({JTAG_CHUNK_TYPE: JKEY_CHUNK_TYPE_JOIN_REQUEST, JTAG_USERNAME: "Bonkers"}) + "|").encode()) # TODO it cannot stay Bonkers.
+        self.csock.send(("|" + json.dumps({M.JTAG_CHUNK_TYPE: M.JKEY_CHUNK_TYPE_JOIN_REQUEST, M.JTAG_USERNAME: "Bonkers"}) + "|").encode()) # TODO it cannot stay Bonkers.
 
 
     def _start_receiver(self):
 
         chunk_rest = ""
         while self.running:    
-            chunk_stream = self.csock[0].recv(1024).decode()
+            chunk_stream = self.csock.recv(1024).decode()
 
             if not chunk_stream:
                 break
+            print("(Client) New stream:", chunk_stream)
+
+
 
             old_rest = chunk_rest
             chunks, chunk_rest = self._slice_chunks(chunk_stream)
@@ -82,19 +78,20 @@ class Client(Communicator):
             for chunk in chunks:
                 data = json.loads(chunk)
 
-                match data.get(JTAG_CHUNK_TYPE):
+                match data.get(M.JTAG_CHUNK_TYPE):
                 
-                    case str(JKEY_CHUNK_TYPE_JOIN_RESPONSE):
+                    case M.JKEY_CHUNK_TYPE_JOIN_RESPONSE:
 
-                        if data.get(JTAG_SUCCESS):
-                            print(f"Successfully logged in with ID {data.get(user_id)}")
+                        user_id = data.get(M.JTAG_USER_ID)
+                        if data.get(M.JTAG_SUCCESS):
+                            print(f"Successfully logged in with ID {user_id}")
 
-                    case str(JKEY_CHUNK_TYPE_EVENT):
+                    case M.JKEY_CHUNK_TYPE_EVENT:
 
                         try:
-                            event_json = data.get(JTAG_EVENT)
+                            event_json = data.get(M.JTAG_EVENT)
                             event = WorldEvent.compose_world_event(event_json)
-                            self.official_events.append(event)
+                            self.new_official_events.append(event)
                         except:
                             print("The server sent a weird JSON structure for the event")
                             break
@@ -104,7 +101,10 @@ class Client(Communicator):
 
 
     def get_events(self):
-        return self.official_events
+        return self.new_official_events
+
+    def reset_events(self):
+        self.new_official_events = []
 
 
     def upload_local_events(self, local_events):
@@ -114,8 +114,6 @@ class Client(Communicator):
         for serialized_local_event in serialized_local_events:
             if serialized_local_event:
                 self.csock.send(serialized_local_event.encode())
-
-
 
 
 
@@ -141,7 +139,7 @@ class Server(Communicator):
 
     def __init__(self):
         self.ssock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.ssock.bind((socket.gethostname(), SERVER_PORT))
+        self.ssock.bind((socket.gethostname(), M.SERVER_PORT))
         self.ssock.listen(3)
         self.running = True        
         
@@ -158,6 +156,7 @@ class Server(Communicator):
         while self.running:
 
             chunk_stream = csock.recv(1024).decode()
+            print("(Server) New stream:", chunk_stream)
 
             if not chunk_stream:
                 break
@@ -168,25 +167,27 @@ class Server(Communicator):
             if not chunks:
                 break
 
-            print("cold as the cold wind")
-            print(chunks, chunk_rest)
-
             chunks[0] = old_rest + chunks[0]
+
 
             # Process the request
             for chunk in chunks:
                 data = json.loads(chunk)
 
-                match data.get(JTAG_CHUNK_TYPE):
+                #print(str(JKEY_CHUNK_TYPE_JOIN_REQUEST))
+                #print("root cause", data.get(JTAG_CHUNK_TYPE))
                 
-                    case  str(JKEY_CHUNK_TYPE_JOIN_REQUEST):
+
+                match data.get(M.JTAG_CHUNK_TYPE):
+                
+                    case M.JKEY_CHUNK_TYPE_JOIN_REQUEST:
 
                         if connection.user_id:
                             break
 
                         success = False
-                        username = data.get(JTAG_USERNAME)
-                        user_id = self.registered_users
+                        username = data.get(M.JTAG_USERNAME)
+                        user_id = self.registered_users + 1
                         
                         if username:
                             success = True
@@ -198,20 +199,20 @@ class Server(Communicator):
 
                             
                         # Response
-                        csock.send(("|" + json.dumps({JTAG_CHUNK_TYPE: JKEY_CHUNK_TYPE_JOIN_RESPONSE, JTAG_SUCCESS: success, JTAG_USERNAME: username, JTAG_USER_ID : user_id}) + "|").encode())
+                        csock.send(("|" + json.dumps({M.JTAG_CHUNK_TYPE: M.JKEY_CHUNK_TYPE_JOIN_RESPONSE, M.JTAG_SUCCESS: success, M.JTAG_USERNAME: username, M.JTAG_USER_ID : user_id}) + "|").encode())
 
                     # The only thing the communicator has to check is whether the event actually originates from
                     # the particular user ID
 
-                    case  str(JKEY_CHUNK_TYPE_EVENT):
-
+                    case  M.JKEY_CHUNK_TYPE_EVENT:
+                    
                         try:
-                            event_json = data.get(JTAG_EVENT)
+                            event_json = data.get(M.JTAG_EVENT)
                             event = WorldEvent.compose_world_event(event_json)
                             # Perform checks, perhaps? Oh well.. maybe it can be done by the event manager as well . ? Presumably so
                             connection.recent_events.append(event)
                         except:
-                            print("The server sent a weird JSON structure for the event")
+                            print("The client sent a weird JSON structure for the event")
                             break
 
                     case _:
@@ -222,23 +223,31 @@ class Server(Communicator):
         while self.running:
             new_socket, new_address = self.ssock.accept()
             new_connection = ClientConnection(new_socket, new_address, None)
+            self.connections.append(new_connection)
+
             new_thread = threading.Thread(target=self._start_receiver_for, args=(new_connection,))
             new_thread.start()
 
 
     def get_events(self):
 
-        dictionary = { connection.user_id : connection.recent_events for connection in self.connections}
+        event_log = { connection.user_id : connection.recent_events for connection in self.connections} # probably requires copy.copy()-ing
+
+        # for v in event_log.values():
+        #     if v:
+        #         print(event_log, 'ye')
+        #         break
+
         for connection in self.connections:
             connection.recent_events = []
-        return dictionary
+
+        return event_log
 
     def upload_local_events(self, local_events):
         
         serialized_local_events = [ self._serialize_event(local_event) for local_event in local_events]
 
         for serialized_local_event in serialized_local_events:
-            print("This is the meaning of life", serialized_local_event)
             for connection in self.connections:
                 if serialized_local_event:
                     connection.socket.send(serialized_local_event.encode())

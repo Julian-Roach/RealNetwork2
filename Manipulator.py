@@ -21,7 +21,7 @@ class Manipulator:
                 return
 
             case _:
-                print("Well that's interesting ;;; Manipulator.py line 24")
+                print("Cannot incorporate the event of type", type(event))
                 return
 
     def revert(self, event):
@@ -33,7 +33,7 @@ class Manipulator:
                 return
 
             case _:
-                print("Well that's interesting ;;; Manipulator.py line 24")
+                print("Cannot revert the event of type", type(event))
                 return
 
     
